@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Карта Повітряних Цілей — Авторизація з "Запам’ятати мене"</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    html, body { margin:0; height:100%; font-family:'Segoe UI',sans-serif; display:flex; flex-direction:column; }
+    #header { display:flex; flex-wrap:wrap; gap:8px; padding:10px; background:#2c3e50; color:white; align-items:center; }
+    .status-item { display:flex; gap:6px; align-items:center; }
+    .status-indicator { padding:6px 10px; border-radius:5px; font-weight:700; color:white; min-width:160px; text-align:center; }
+    .inactive { background:#27ae60; }
+    .active { background:#c0392b; }
+    button { padding:6px 12px; border:none; border-radius:5px; background:#2980b9; color:white; cursor:pointer; }
+    button:hover:not(:disabled) { background:#1f6391; }
+    button:disabled { background:gray; cursor:not-allowed; }
+    #counter { font-size:18px; font-weight:600; margin-right:auto; }
+    #map { flex:1; min-height:400px; }
+    #legend { padding:12px; font-size:13px; background:white; border-top:1px solid #ddd; line-height:1.4; }
+    #login-panel { display:flex; align-items:center; gap:10px; }
+    #remember-label { user-select:none; cursor:pointer; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="counter">Всього цілей: 0</div>
+
+    <div class="status-item">
+      <div id="strat-ind" class="status-indicator inactive">Стратегічна авіація: не активна</div>
+      <button id="btn-strat" disabled>Змінити статус</button>
+    </div>
+    <div class="status-item">
+      <div id="takeoff-ind" class="status-indicator inactive">Зліт Ту‑95/160: не відбулося</div>
+      <button id="btn-takeoff" disabled>Змінити статус</button>
+    </div>
+    <div class="status-item">
+      <div id="mig-ind" class="status-indicator inactive">Зліт МіГ‑31К: не відбувся</div>
+      <button id="btn-mig" disabled>Змінити статус</button>
+    </div>
+    <div class="status-item">
+      <div id="ballistic-ind" class="status-indicator inactive">Загроза балістика: відсутня</div>
+      <button id="btn-ballistic" disabled>Змінити статус</button>
+    </div>
+
+    <div id="login-panel">
+      <button id="btn-login">Увійти</button>
+      <label id="remember-label"><input type="checkbox" id="chk-remember"> Запам’ятати мене</label>
+    </div>
+
+    <button id="btn-add-target" disabled>Додати ціль</button>
+    <button id="btn-add-takeoff" disabled>Додати зліт</button>
+    <button id="btn-add-plane" disabled>Додати літак</button>
+    <button id="btn-add-launcher" disabled>Додати пускову установку</button>
+    <button id="btn-refresh">Оновити</button>
+    <button id="btn-clear" disabled>Очистити</button>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="legend">
+    <b>Позначення:</b><br>
+    🔺 Шахед • 🔴 Х‑101 • 🔵 Кинджал • 🟣 Калібр • ⬛ Х‑22 • ⬛ Іскандер‑М • ⬛ Іскандер‑К • ⬛ KN‑23<br>
+    ✈️ Ту‑95 (червоний) / Ту‑160 (фіолетовий) / Ту‑22М3 (оранжевий) / МіГ‑31К (берюзовий)<br>
+    🚀 Пускова установка (червона ракета)<br>
+    📡 Аеродром (радар)<br>
+    <b>Стрілки:</b> пунктирні до місця призначення
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // Авторизація з "Запам’ятати мене"
+    let isLoggedIn = false;
+
+    const loginBtn = document.getElementById("btn-login");
+    const rememberCheckbox = document.getElementById("chk-remember");
+    const protectedBtns = [
+      document.getElementById("btn-add-target"),
+      document.getElementById("btn-add-takeoff"),
+      document.getElementById("btn-add-plane"),
+      document.getElementById("btn-add-launcher"),
+      document.getElementById("btn-clear"),
+      document.getElementById("btn-strat"),
+      document.getElementById("btn-takeoff"),
+      document.getElementById("btn-mig"),
+      document.getElementById("btn-ballistic")
+    ];
+
+    // Перевіряємо чи збережено авторизацію
+    function checkStoredLogin() {
+      const stored = localStorage.getItem('loggedIn');
+      if (stored === 'true') {
+        isLoggedIn = true;
+      }
+    }
+
+    function updateAuthUI() {
+      protectedBtns.forEach(btn => btn.disabled = !isLoggedIn);
+      loginBtn.textContent = isLoggedIn ? "Вийти" : "Увійти";
+      rememberCheckbox.disabled = isLoggedIn; // після входу забороняємо змінювати чекбокс
+      if(!isLoggedIn) rememberCheckbox.checked = false;
+    }
+
+    loginBtn.onclick = () => {
+      if (isLoggedIn) {
+        isLoggedIn = false;
+        localStorage.removeItem('loggedIn');
+        alert("Ви вийшли.");
+      } else {
+        const login = prompt("Логін:");
+        const pass = prompt("Пароль:");
+        if (login === "admin" && pass === "1234") {
+          isLoggedIn = true;
+          alert("Успішний вхід!");
+          if (rememberCheckbox.checked) {
+            localStorage.setItem('loggedIn', 'true');
+          }
+        } else {
+          alert("Невірні дані.");
+          return;
+        }
+      }
+      updateAuthUI();
+    };
+
+    checkStoredLogin();
+    updateAuthUI();
+
+    // Карта
+    const map = L.map('map').setView([48.4,31.2],6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OSM' }).addTo(map);
+
+    const ctr = document.getElementById('counter');
+
+    // Перемикач статусів
+    function toggle(el,textOn,textOff){
+      if(!isLoggedIn) {
+        alert("Будь ласка, увійдіть, щоб змінювати статуси.");
+        return false;
+      }
+      const active = el.classList.toggle('active');
+      el.classList.toggle('inactive',!active);
+      el.textContent = active ? textOn : textOff;
+      saveStatus();
+      return active;
+    }
+
+    document.getElementById('btn-strat').onclick = ()=>toggle(document.getElementById('strat-ind'),
+      'Стратегічна авіація: активна', 'Стратегічна авіація: не активна');
+    document.getElementById('btn-takeoff').onclick = ()=>toggle(document.getElementById('takeoff-ind'),
+      'Зліт Ту‑95/160: відбувся', 'Зліт Ту‑95/160: не відбулося');
+    document.getElementById('btn-mig').onclick = ()=>toggle(document.getElementById('mig-ind'),
+      'Зліт МіГ‑31К: відбувся', 'Зліт МіГ‑31К: не відбувся');
+    document.getElementById('btn-ballistic').onclick = ()=>toggle(document.getElementById('ballistic-ind'),
+      'Загроза балістика: активна', 'Загроза балістика: відсутня');
+
+    // Логіка додавання цілей та об’єктів
+    let idCnt = 0, targets = new Map();
+    let state = {}, phase = 0;
+
+    function updateCtr(){
+      ctr.textContent = `Всього цілей: ${targets.size}`;
+    }
+
+    // Іконки для цілей
+    function createIcon(type,count=1,angle=0){
+      let svg = '';
+      switch(type){
+        case 'шахед': svg='<polygon points="15,0 30,30 0,30" fill="red"/>'; break;
+        case 'х-101': svg='<rect x="6" y="7" width="18" height="16" fill="red"/><polygon points="24,15 30,12 30,18" fill="darkred"/>'; break;
+        case 'кинджал': svg='<rect x="8" y="4" width="14" height="22" fill="blue"/>'; break;
+        case 'калібр': svg='<rect x="8" y="4" width="14" height="22" fill="purple"/>'; break;
+        case 'х-22': svg='<rect x="5" y="12" width="20" height="6" fill="#AA0000"/><polygon points="5,12 15,7 25,12" fill="#AA0000"/>'; break;
+        case 'іскандер-м': svg='<rect x="7" y="12" width="16" height="8" fill="#008000"/><polygon points="7,12 15,8 23,12" fill="#008000"/>'; break;
+        case 'іскандер-к': svg='<rect x="7" y="12" width="16" height="8" fill="#004080"/><polygon points="7,12 15,8 23,12" fill="#004080"/>'; break;
+        case 'kn-23': svg='<rect x="5" y="12" width="20" height="8" fill="#800080"/><polygon points="5,12 15,8 25,12" fill="#800080"/>'; break;
+        case 'ту-95': svg='<rect x="5" y="10" width="20" height="10" fill="red"/><polygon points="5,10 10,5 15,10" fill="red"/><polygon points="25,10 20,5 15,10" fill="red"/><polygon points="5,20 10,25 15,20" fill="red"/><polygon points="25,20 20,25 15,20" fill="red"/>'; break;
+        case 'ту-160': svg='<rect x="5" y="10" width="20" height="10" fill="purple"/><polygon points="5,10 10,5 15,10" fill="purple"/><polygon points="25,10 20,5 15,10" fill="purple"/><polygon points="5,20 10,25 15,20" fill="purple"/><polygon points="25,20 20,25 15,20" fill="purple"/>'; break;
+        case 'ту-22м3': svg='<rect x="5" y="10" width="20" height="10" fill="orange"/><polygon points="5,10 10,5 15,10" fill="orange"/><polygon points="25,10 20,5 15,10" fill="orange"/><polygon points="5,20 10,25 15,20" fill="orange"/><polygon points="25,20 20,25 15,20" fill="orange"/>'; break;
+        case 'міг-31к': svg='<rect x="5" y="10" width="20" height="10" fill="teal"/><polygon points="5,10 10,5 15,10" fill="teal"/><polygon points="25,10 20,5 15,10" fill="teal"/><polygon points="5,20 10,25 15,20" fill="teal"/><polygon points="25,20 20,25 15,20" fill="teal"/>'; break;
+        case 'пускова': svg='<polygon points="15,5 20,15 10,15" fill="red"/><rect x="13" y="15" width="4" height="12" fill="red"/>'; break;
+        case 'аеродром': svg='<circle cx="15" cy="15" r="12" stroke="#2980b9" stroke-width="3" fill="none"/><circle cx="15" cy="15" r="20" stroke="#2980b9" stroke-width="1.5" fill="none"/>'; break;
+        default: svg='<circle cx="15" cy="15" r="10" fill="gray"/>';
+      }
+      return L.divIcon({
+        html:`<svg width="40" height="40" viewBox="0 0 30 30" style="transform:rotate(${angle}deg)">${svg}</svg>`,
+        iconSize:[40,40],
+        iconAnchor:[20,20]
+      });
+    }
+
+    // Обчислення кута між двома точками
+    function ang(a,b){
+      return (Math.atan2(b.lng-a.lng, b.lat-a.lat)*180/Math.PI+360)%360;
+    }
+
+    // Визначення точки на відстані dist в напрямку bearing від точки a
+    function dest(a, bearing, dist=20000){
+      const R=6378137, r=bearing*Math.PI/180, lat1=a.lat*Math.PI/180, lng1=a.lng*Math.PI/180;
+      const lat2=Math.asin(Math.sin(lat1)*Math.cos(dist/R)+Math.cos(lat1)*Math.sin(dist/R)*Math.cos(r));
+      const lng2=lng1+Math.atan2(Math.sin(r)*Math.sin(dist/R)*Math.cos(lat1), Math.cos(dist/R)-Math.sin(lat1)*Math.sin(lat2));
+      return L.latLng(lat2*180/Math.PI, lng2*180/Math.PI);
+    }
+
+    // Додавання цілі
+    function addTarget(type, count, start, end, givenId) {
+      const a = ang(start, end);
+      const id = givenId || ('tg' + (++idCnt));
+      const m = L.marker(start, { icon: createIcon(type, count, a), draggable: true }).addTo(map);
+      const line = L.polyline([start, end], { color: 'red', dashArray: '5,5' }).addTo(map);
+      const arrow = L.marker(end, {
+        icon: L.divIcon({
+          html: `<svg width="15" viewBox="0 0 30 30" style="transform:rotate(${a}deg)">
+                  <polygon points="15,0 30,30 0,30" fill="red"/>
+                 </svg>`,
+          iconSize: [15, 15],
+          iconAnchor: [7, 7]
+        }),
+        interactive: false
+      }).addTo(map);
+
+      m.on('dragend', e => {
+        const p = e.target.getLatLng();
+        const newEnd = dest(p, a);
+        line.setLatLngs([p, newEnd]);
+        arrow.setLatLng(newEnd);
+        saveTargets();
+      });
+
+      line.on('click', e => {
+        if(!isLoggedIn) return alert("Будь ласка, увійдіть, щоб видаляти цілі.");
+        removeTarget(id);
+      });
+      m.on('click', e => {
+        if(!isLoggedIn) return alert("Будь ласка, увійдіть, щоб видаляти цілі.");
+        removeTarget(id);
+      });
+      arrow.on('click', e => {
+        if(!isLoggedIn) return alert("Будь ласка, увійдіть, щоб видаляти цілі.");
+        removeTarget(id);
+      });
+
+      targets.set(id, {id, type, count, m, line, arrow});
+      updateCtr();
+      saveTargets();
+    }
+
+    // Видалення цілі
+    function removeTarget(id){
+      const obj = targets.get(id);
+      if(!obj) return;
+      if(obj.m) map.removeLayer(obj.m);
+      if(obj.line) map.removeLayer(obj.line);
+      if(obj.arrow) map.removeLayer(obj.arrow);
+      targets.delete(id);
+      updateCtr();
+      saveTargets();
+    }
+
+    // Кнопки додавання цілей/літаків/пускових
+    document.getElementById('btn-add-target').onclick = () => {
+      if(!isLoggedIn){ alert("Будь ласка, увійдіть, щоб додавати цілі."); return; }
+      const t = prompt('Ціль: шахед, х-101, кинджал, калібр, х-22, іскандер-м, іскандер-к, kn-23').toLowerCase();
+      if (!['шахед','х-101','кинджал','калібр','х-22','іскандер-м','іскандер-к','kn-23'].includes(t)) return alert('Невірна ціль');
+      const c = parseInt(prompt('Кількість:'),10); if(!c || c<1) return alert('Невірна кількість');
+      state = { type: t, count: c }; phase = 5; alert('Клік – початок цілі');
+    };
+
+    document.getElementById('btn-add-takeoff').onclick = () => {
+      if(!isLoggedIn){ alert("Будь ласка, увійдіть, щоб додавати зльоти."); return; }
+      const t = prompt('Зліт: ту-95, ту-160').toLowerCase();
+      if (!['ту-95','ту-160'].includes(t)) return alert('Невірний зліт');
+      const c = parseInt(prompt('Кількість:'),10); if(!c || c<1) return alert('Невірна кількість');
+      state = { type: t, count: c }; phase = 6; alert('Клік – старт зльоту');
+    };
+
+    document.getElementById('btn-add-plane').onclick = () => {
+      if(!isLoggedIn){ alert("Будь ласка, увійдіть, щоб додавати літаки."); return; }
+      const t = prompt('Літак: ту-95, ту-160, ту-22м3, міг-31к').toLowerCase();
+      if (!['ту-95','ту-160','ту-22м3','міг-31к'].includes(t)) return alert('Невірний літак');
+      const c = parseInt(prompt('Кількість:'),10); if(!c || c<1) return alert('Невірна кількість');
+      state = { type: t, count: c }; phase = 7; alert('Клік – позиція літака');
+    };
+
+    document.getElementById('btn-add-launcher').onclick = () => {
+      if(!isLoggedIn){ alert("Будь ласка, увійдіть, щоб додавати пускові установки."); return; }
+      const c = parseInt(prompt('Кількість:'),10); if(!c || c<1) return alert('Невірна кількість');
+      state = { type: 'пускова', count: c }; phase = 8; alert('Клік – позиція пускової установки');
+    };
+
+    // Логіка кліків для додавання цілей/об'єктів
+    map.on('click', e => {
+      if(!isLoggedIn) return;
+      if(phase === 5){
+        // Старт цілі
+        state.start = e.latlng;
+        alert('Клік – кінець цілі');
+        phase = 51;
+      } else if(phase === 51){
+        // Кінець цілі
+        addTarget(state.type, state.count, state.start, e.latlng);
+        phase = 0; state = {};
+      } else if(phase === 6){
+        // Старт зльоту (одна точка, просто додаємо маркер)
+        addTarget(state.type, state.count, e.latlng, dest(e.latlng, 0));
+        phase = 0; state = {};
+      } else if(phase === 7){
+        // Позиція літака
+        addTarget(state.type, state.count, e.latlng, dest(e.latlng, 0));
+        phase = 0; state = {};
+      } else if(phase === 8){
+        // Пускова установка позиція
+        addTarget(state.type, state.count, e.latlng, dest(e.latlng, 0));
+        phase = 0; state = {};
+      }
+    });
+
+    // Збереження статусів
+    function saveStatus(){
+      const statuses = {
+        strat: document.getElementById('strat-ind').classList.contains('active'),
+        takeoff: document.getElementById('takeoff-ind').classList.contains('active'),
+        mig: document.getElementById('mig-ind').classList.contains('active'),
+        ballistic: document.getElementById('ballistic-ind').classList.contains('active')
+      };
+      localStorage.setItem('statuses', JSON.stringify(statuses));
+    }
+
+    // Завантаження статусів
+    function loadStatus(){
+      const s = localStorage.getItem('statuses');
+      if(!s) return;
+      const statuses = JSON.parse(s);
+      if(statuses.strat) {
+        document.getElementById('strat-ind').classList.add('active'); 
+        document.getElementById('strat-ind').classList.remove('inactive'); 
+        document.getElementById('strat-ind').textContent = 'Стратегічна авіація: активна';
+      }
+      if(statuses.takeoff) {
+        document.getElementById('takeoff-ind').classList.add('active'); 
+        document.getElementById('takeoff-ind').classList.remove('inactive'); 
+        document.getElementById('takeoff-ind').textContent = 'Зліт Ту‑95/160: відбувся';
+      }
+      if(statuses.mig) {
+        document.getElementById('mig-ind').classList.add('active'); 
+        document.getElementById('mig-ind').classList.remove('inactive'); 
+        document.getElementById('mig-ind').textContent = 'Зліт МіГ‑31К: відбувся';
+      }
+      if(statuses.ballistic) {
+        document.getElementById('ballistic-ind').classList.add('active'); 
+        document.getElementById('ballistic-ind').classList.remove('inactive'); 
+        document.getElementById('ballistic-ind').textContent = 'Загроза балістика: активна';
+      }
+    }
+
+    // Збереження цілей
+    function saveTargets(){
+      const arr = [];
+      targets.forEach(obj => {
+        const m = obj.m.getLatLng();
+        const lineLatLngs = obj.line.getLatLngs();
+        arr.push({
+          id: obj.id,
+          type: obj.type,
+          count: obj.count,
+          start: { lat: m.lat, lng: m.lng },
+          end: { lat: lineLatLngs[1].lat, lng: lineLatLngs[1].lng }
+        });
+      });
+      localStorage.setItem('targets', JSON.stringify(arr));
+    }
+
+    // Завантаження цілей
+    function loadTargets(){
+      const data = localStorage.getItem('targets');
+      if(!data) return;
+      const arr = JSON.parse(data);
+      arr.forEach(o => {
+        addTarget(o.type, o.count, L.latLng(o.start.lat, o.start.lng), L.latLng(o.end.lat, o.end.lng), o.id);
+      });
+      updateCtr();
+    }
+
+    // Очистити всі цілі
+    document.getElementById('btn-clear').onclick = () => {
+      if(!isLoggedIn){ alert("Будь ласка, увійдіть, щоб очистити цілі."); return; }
+      targets.forEach(o => {
+        if (o.m) map.removeLayer(o.m);
+        if (o.line) map.removeLayer(o.line);
+        if (o.arrow) map.removeLayer(o.arrow);
+      });
+      targets.clear();
+      updateCtr();
+      localStorage.removeItem('targets');
+    };
+
+    // Оновити (перезавантаження сторінки, цілі збережуться)
+    document.getElementById('btn-refresh').onclick = () => location.reload();
+
+    // Початкове завантаження
+    loadStatus();
+    loadTargets();
+    updateCtr();
+  </script>
+</body>
+</html>
